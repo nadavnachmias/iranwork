@@ -1,40 +1,42 @@
 pipeline {
     agent any
 
+    environment {
+        REPO_URL = "http://localhost:8081/repository/iranRepo"
+        CREDENTIALS_ID = "nexus3"
+    }
+
     stages {
         stage('Delete Folders Older Than 7 Days') {
             steps {
                 script {
-                    def repoUrl     = 'http://localhost:8081'
-                    def repoName    = 'iranRepo'
-                    def credentials = 'nexus3'
-                    def threshold   = new Date() - 7
+                    withCredentials([usernamePassword(credentialsId: "${CREDENTIALS_ID}", passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
+                        // List top-level folders
+                        def rawList = sh(script: """
+                            curl -sk -u "$USERNAME:$PASSWORD" "$REPO_URL/" | grep -oP '(?<=href=")[0-9]{2}-[0-9]{2}-[0-9]{4}/(?=")' | sed 's#/##'
+                        """, returnStdout: true).trim()
 
-                    withCredentials([usernamePassword(credentialsId: credentials, usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                        def json = sh(
-                            returnStdout: true,
-                            script: """curl -k -s -u "$USERNAME:$PASSWORD" "${repoUrl}/service/rest/v1/assets?repository=${repoName}" """
-                        ).trim()
+                        if (!rawList) {
+                            echo "⚠️ No date-based folders found."
+                            return
+                        }
 
-                        def data = readJSON text: json
+                        def folderList = rawList.split("\\n")
+                        def threshold = new Date() - 7
 
-                        def folders = data.items
-                            .collect { it.path.tokenize('/')[0] }
-                            .findAll { it ==~ /\\d{2}-\\d{2}-\\d{4}/ }
-                            .unique()
-
-                        folders.each { folder ->
+                        folderList.each { folder ->
                             try {
-                                def date = Date.parse('dd-MM-yyyy', folder)
-                                if (date.before(threshold)) {
-                                    def deleteUrl = "${repoUrl}/repository/${repoName}/${folder}/"
-                                    echo "🗑️ Deleting: ${deleteUrl}"
-                                    sh """curl -k -u "$USERNAME:$PASSWORD" -X DELETE "${deleteUrl}" """
+                                def folderDate = Date.parse("dd-MM-yyyy", folder)
+                                if (folderDate.before(threshold)) {
+                                    echo "🗑 Deleting folder: $folder"
+                                    sh """
+                                        curl -sk -u "$USERNAME:$PASSWORD" -X DELETE "$REPO_URL/$folder/"
+                                    """
                                 } else {
-                                    echo "✅ Keeping: ${folder}"
+                                    echo "✅ Keeping folder: $folder (not old enough)"
                                 }
-                            } catch (ignored) {
-                                echo "⚠️ Skipping invalid: ${folder}"
+                            } catch (Exception e) {
+                                echo "⛔ Skipping invalid folder name: $folder"
                             }
                         }
                     }
