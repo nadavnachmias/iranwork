@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     stages {
-        stage('Create Folder Tree and Test Files') {
+        stage('Create Folder Tree with Files') {
             steps {
                 script {
-                    // Create a nested folder tree with various files
+                    // Create a nested file tree with mixed files
                     sh '''
                         mkdir -p first_pipeline/level1/level2
                         echo '{}' > first_pipeline/level1/level2/a.json
@@ -17,39 +17,48 @@ pipeline {
             }
         }
 
-        stage('Upload All Files to Nexus (Flat, with -k)') {
+        stage('Upload Files to Nexus (10-Day Range)') {
             steps {
                 script {
-                    def uploadAllFilesFlat = { String localDir, String repoUrl, String repoName, String credsId ->
-                        def today = new Date().format('dd-MM-yyyy')
+                    def uploadToDateFolders = { String localDir, String repoUrl, String repoName, String credsId, String startDateStr, int numDays ->
+                        def sdf = new java.text.SimpleDateFormat("dd-MM-yyyy")
+                        def startDate = sdf.parse(startDateStr)
 
                         dir(localDir) {
-                            // Find all files recursively
                             def files = sh(returnStdout: true, script: "find . -type f").trim().split('\n')
 
-                            files.each { filePath ->
-                                def fileName = filePath.tokenize('/').last()  // just the filename
-                                def uploadUrl = "${repoUrl}/${repoName}/${today}/${fileName}"
+                            (0..<numDays).each { offset ->
+                                def date = startDate + offset
+                                def dateStr = sdf.format(date)
 
-                                echo "Uploading ${filePath} → ${uploadUrl}"
+                                echo "📂 Uploading into Nexus folder: ${dateStr}"
 
-                                withCredentials([usernamePassword(credentialsId: credsId, usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                                    sh """
-                                        curl -v -k -u "$USERNAME:$PASSWORD" \
-                                             --upload-file '${filePath}' \
-                                             '${uploadUrl}'
-                                    """
+                                files.each { filePath ->
+                                    def fileName = filePath.tokenize('/').last()
+                                    def uploadUrl = "${repoUrl}/${repoName}/${dateStr}/${fileName}"
+
+                                    echo "→ Uploading ${filePath} → ${uploadUrl}"
+
+                                    withCredentials([usernamePassword(credentialsId: credsId, usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                                        sh """
+                                            curl -k -u "$USERNAME:$PASSWORD" \
+                                                 --upload-file '${filePath}' \
+                                                 '${uploadUrl}'
+                                        """
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Call the uploader function
-                    uploadAllFilesFlat(
-                        'first_pipeline',                          // Jenkins workspace folder
-                        'http://localhost:8081/repository',        // Nexus base URL
-                        'iranRepo',                                // Nexus repo name
-                        'nexus3'                                   // Jenkins credentials ID
+                    // Call: upload from 05-06-2025 to 15-06-2025
+                    uploadToDateFolders(
+                        'first_pipeline',
+                        'http://localhost:8081/repository',
+                        'iranRepo',
+                        'nexus3',
+                        '05-06-2025',  // start date
+                        11             // number of days (inclusive range)
                     )
                 }
             }
