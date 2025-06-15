@@ -1,12 +1,13 @@
-def uploadSpecificFilesToNexus(String baseDir, String repoUrl, String repoPath, String credentialsId, String fileName) {
+def uploadAllFilesToNexus(String baseDir, String repoUrl, String repoPath, String credentialsId) {
     def currentDate = new Date().format('dd-MM-yyyy')
 
     dir(baseDir) {
-        def files = sh(returnStdout: true, script: "find . -type f -name '${fileName}'").trim().split('\n')
+        // Find all files under the baseDir recursively
+        def files = sh(returnStdout: true, script: "find . -type f").trim().split('\n')
 
         files.each { filePath ->
-            def trimmedPath = filePath.tokenize('/').last()
-            def nexusUrl = "${repoUrl}/${repoPath}/${currentDate}/feature_test/${trimmedPath}"
+            def relativePath = filePath.replaceFirst("^\\./", "")
+            def nexusUrl = "${repoUrl}/${repoPath}/${currentDate}/feature_test/${relativePath}"
 
             withCredentials([usernamePassword(credentialsId: credentialsId, passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
                 sh """
@@ -23,15 +24,14 @@ pipeline {
     agent any
 
     stages {
-        stage('Upload Specific Files') {
+        stage('Upload Files to Nexus') {
             steps {
                 script {
-                    uploadSpecificFilesToNexus(
-                        baseDir: 'src', // replace with your base folder
-                        repoUrl: 'https://your-nexus-url/repository', // replace with your Nexus URL
-                        repoPath: 'cons', // example repo path
-                        credentialsId: 'nexus-creds-id', // Jenkins credentials ID
-                        fileName: 'myfile.json' // file to look for
+                    uploadAllFilesToNexus(
+                        baseDir: 'a', // This is inside the Jenkins workspace
+                        repoUrl: 'http://localhost:8081/repository',
+                        repoPath: 'iranRepo',
+                        credentialsId: 'nexus3'
                     )
                 }
             }
