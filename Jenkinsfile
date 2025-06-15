@@ -2,63 +2,54 @@ pipeline {
     agent any
 
     stages {
-        stage('Create Folder Tree with Files') {
+        stage('Clean Old Nexus Folders') {
             steps {
                 script {
-                    // Create a nested file tree with mixed files
-                    sh '''
-                        mkdir -p first_pipeline/level1/level2
-                        echo '{}' > first_pipeline/level1/level2/a.json
-                        echo 'log content' > first_pipeline/level1/level2/b.log
-                        echo 'some text' > first_pipeline/level1/level2/c.txt
-                        echo 'data' > first_pipeline/level1/level2/data.csv
-                    '''
-                }
-            }
-        }
+                    def cleanupOldNexusFolders = { String repoUrl, String repoPath, String credentialsId ->
+                        def threshold = new Date() - 7  // today minus 7 days
 
-        stage('Upload Files to Nexus (10-Day Range)') {
-            steps {
-                script {
-                    def uploadToDateFolders = { String localDir, String repoUrl, String repoName, String credsId, String startDateStr, int numDays ->
-                        def sdf = new java.text.SimpleDateFormat("dd-MM-yyyy")
-                        def startDate = sdf.parse(startDateStr)
+                        withCredentials([usernamePassword(credentialsId: credentialsId, passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
+                            // List folders in the repo path and extract those matching dd-MM-yyyy format
+                            def listCmd = """
+                            curl -s -u "$USERNAME:$PASSWORD" "${repoUrl}/${repoPath}/" | \
+                            grep -oP '(?<=href=")[0-9]{2}-[0-9]{2}-[0-9]{4}/(?=")' | sed 's#/##'
+                            """
 
-                        dir(localDir) {
-                            def files = sh(returnStdout: true, script: "find . -type f").trim().split('\n')
+                            def folderListRaw = sh(returnStdout: true, script: listCmd).trim()
 
-                            (0..<numDays).each { offset ->
-                                def date = startDate + offset
-                                def dateStr = sdf.format(date)
+                            if (!folderListRaw) {
+                                echo "No date-based folders found in Nexus path: ${repoPath}"
+                                return
+                            }
 
-                                echo "📂 Uploading into Nexus folder: ${dateStr}"
+                            def folderList = folderListRaw.split("\\n")
 
-                                files.each { filePath ->
-                                    def fileName = filePath.tokenize('/').last()
-                                    def uploadUrl = "${repoUrl}/${repoName}/${dateStr}/${fileName}"
+                            folderList.each { folder ->
+                                try {
+                                    def folderDate = Date.parse('dd-MM-yyyy', folder)
 
-                                    echo "→ Uploading ${filePath} → ${uploadUrl}"
+                                    if (folderDate.before(threshold)) {
+                                        def deleteUrl = "${repoUrl}/${repoPath}/${folder}/"
+                                        echo "🗑️ Deleting folder: ${folder} → ${deleteUrl}"
 
-                                    withCredentials([usernamePassword(credentialsId: credsId, usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
                                         sh """
-                                            curl -k -u "$USERNAME:$PASSWORD" \
-                                                 --upload-file '${filePath}' \
-                                                 '${uploadUrl}'
+                                            curl -k -u "$USERNAME:$PASSWORD" -X DELETE "${deleteUrl}"
                                         """
+                                    } else {
+                                        echo "✅ Keeping folder: ${folder}"
                                     }
+                                } catch (Exception e) {
+                                    echo "⚠️ Skipping non-date folder: ${folder}"
                                 }
                             }
                         }
                     }
 
-                    // Call: upload from 05-06-2025 to 15-06-2025
-                    uploadToDateFolders(
-                        'first_pipeline',
-                        'http://localhost:8081/repository',
-                        'iranRepo',
-                        'nexus3',
-                        '05-06-2025',  // start date
-                        11             // number of days (inclusive range)
+                    // Call cleanup function with same repo + credentials
+                    cleanupOldNexusFolders(
+                        'http://localhost:8081/repository',  // Nexus base URL
+                        'iranRepo',                          // Nexus repo path
+                        'nexus3'                             // Jenkins credentials ID
                     )
                 }
             }
