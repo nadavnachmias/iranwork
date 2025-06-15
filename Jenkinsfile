@@ -15,6 +15,8 @@ pipeline {
                                 def relativePath = filePath.replaceFirst("^\\./", "")
                                 def nexusUrl = "${repoUrl}/${repoPath}/${currentDate}/feature_test/${relativePath}"
 
+                                echo "Uploading: ${filePath} to ${nexusUrl}"
+
                                 withCredentials([usernamePassword(credentialsId: credentialsId, passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
                                     sh """
                                         curl -v -u "$USERNAME:$PASSWORD" \
@@ -27,10 +29,10 @@ pipeline {
                     }
 
                     uploadAllFilesToNexus(
-                        'a',                          // folder in Jenkins workspace
-                        'http://localhost:8081/repository',        // repo URL
-                        'iranRepo',                                // repo path
-                        'nexus3'                                   // credentials ID in Jenkins
+                        'first_pipeline',                          // folder inside workspace
+                        'http://localhost:8081/repository',        // Nexus repo base URL
+                        'iranRepo',                                // Nexus repo name
+                        'nexus3'                                   // Jenkins credentials ID
                     )
                 }
             }
