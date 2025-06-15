@@ -1,45 +1,56 @@
 pipeline {
     agent any
 
-    environment {
-        REPO_URL = "http://localhost:8081/repository/iranRepo"
-        CREDENTIALS_ID = "nexus3"
-    }
-
     stages {
-        stage('Delete Folders Older Than 7 Days') {
+        stage('Create Folder Tree and Test Files') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: "${CREDENTIALS_ID}", passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
-                        // List top-level folders
-                        def rawList = sh(script: """
-                            curl -sk -u "$USERNAME:$PASSWORD" "$REPO_URL/" | grep -oP '(?<=href=")[0-9]{2}-[0-9]{2}-[0-9]{4}/(?=")' | sed 's#/##'
-                        """, returnStdout: true).trim()
+                    // Create a nested folder tree with various files
+                    sh '''
+                        mkdir -p first_pipeline/level1/level2
+                        echo '{}' > first_pipeline/level1/level2/a.json
+                        echo 'log content' > first_pipeline/level1/level2/b.log
+                        echo 'some text' > first_pipeline/level1/level2/c.txt
+                        echo 'data' > first_pipeline/level1/level2/data.csv
+                    '''
+                }
+            }
+        }
 
-                        if (!rawList) {
-                            echo "⚠️ No date-based folders found."
-                            return
-                        }
+        stage('Upload All Files to Nexus (Flat, with -k)') {
+            steps {
+                script {
+                    def uploadAllFilesFlat = { String localDir, String repoUrl, String repoName, String credsId ->
+                        def today = new Date().format('dd-MM-yyyy')
 
-                        def folderList = rawList.split("\\n")
-                        def threshold = new Date() - 7
+                        dir(localDir) {
+                            // Find all files recursively
+                            def files = sh(returnStdout: true, script: "find . -type f").trim().split('\n')
 
-                        folderList.each { folder ->
-                            try {
-                                def folderDate = Date.parse("dd-MM-yyyy", folder)
-                                if (folderDate.before(threshold)) {
-                                    echo "🗑 Deleting folder: $folder"
+                            files.each { filePath ->
+                                def fileName = filePath.tokenize('/').last()  // just the filename
+                                def uploadUrl = "${repoUrl}/${repoName}/${today}/${fileName}"
+
+                                echo "Uploading ${filePath} → ${uploadUrl}"
+
+                                withCredentials([usernamePassword(credentialsId: credsId, usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
                                     sh """
-                                        curl -sk -u "$USERNAME:$PASSWORD" -X DELETE "$REPO_URL/$folder/"
+                                        curl -k -u "$USERNAME:$PASSWORD" \
+                                             --upload-file '${filePath}' \
+                                             '${uploadUrl}'
                                     """
-                                } else {
-                                    echo "✅ Keeping folder: $folder (not old enough)"
                                 }
-                            } catch (Exception e) {
-                                echo "⛔ Skipping invalid folder name: $folder"
                             }
                         }
                     }
+
+                    // Call the uploader function
+                    uploadAllFilesFlat(
+                        'first_pipeline',                          // Jenkins workspace folder
+                        'http://localhost:8081/repository',        // Nexus base URL
+                        'iranRepo',                                // Nexus repo name
+                        'nexus3'                                   // Jenkins credentials ID
+                    )
                 }
             }
         }
